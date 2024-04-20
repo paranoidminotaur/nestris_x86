@@ -70,7 +70,7 @@ sudo apt install libsdl-mixer1.2-dev libsdl1.2-dev libsdl-image1.2-dev libyaml-c
 ```
 mkdir build
 cd build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j8
 ```
 #### MacOS
@@ -80,7 +80,7 @@ brew install libpng sdl_mixer
 ```
 mkdir build
 cd build
-cmake ..
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j8
 ```
 #### Windows
