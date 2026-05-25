@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.10)
 project(nestris_x86)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -25,36 +25,45 @@ if(WIN32)
 
 else()
     FIND_PACKAGE(PNG REQUIRED)
-    FIND_PACKAGE(SDL_mixer REQUIRED)
-    FIND_PACKAGE(SDL REQUIRED)
     FIND_PACKAGE(OpenGL REQUIRED)
-    INCLUDE_DIRECTORIES(${SDL_INCLUDE_DIR} ${SDL_MIXER_INCLUDE_DIRS})
-
-    SET(TETRIS_LIBS
-        ${SDL_MIXER_LIBRARIES}
-        ${SDL_LIBRARY}
-        )
 
     #MacOS
-    #brew install libpng sdl_mixer
+    #brew install libpng sdl2 sdl2_mixer yaml-cpp
     if(APPLE)
         MESSAGE("Building for MacOS...")
 
-        #I would have thought that this needs to go BEFORE FIND_PACKAGE(SDL...)
-        list(INSERT CMAKE_FRAMEWORK_PATH 0 /System/Library/Frameworks)
+        find_package(SDL2 REQUIRED)
+        find_package(SDL2_mixer REQUIRED)
+        find_package(yaml-cpp REQUIRED)
 
-        FIND_PACKAGE(GLUT REQUIRED)
+        SET(TETRIS_LIBS SDL2_mixer::SDL2_mixer)
 
         SET(OLC_LIBS
-                GLUT::GLUT
+                SDL2::SDL2
                 PNG::PNG
-                ${OPENGL_LIBRARIES}
+                yaml-cpp::yaml-cpp
+                "-framework OpenGL"
             )
+
     #LINUX
-    #sudo apt install libsdl-mixer1.2-dev libsdl1.2-dev libyaml-cpp-dev
+    #sudo apt install libpng-dev libsdl2-dev libsdl2-mixer-dev libyaml-cpp-dev libgl-dev
     else()
         MESSAGE("Building for linux...")
+
+        find_package(SDL2 REQUIRED)
+        find_path(SDL_MIXER_INCLUDE_DIR SDL_mixer.h PATH_SUFFIXES SDL2)
+        find_library(SDL_MIXER_LIBRARY NAMES SDL2_mixer)
+
+        if(NOT SDL_MIXER_LIBRARY)
+            message(FATAL_ERROR "SDL2_mixer not found. Install: sudo apt install libsdl2-mixer-dev")
+        endif()
+
+        INCLUDE_DIRECTORIES(${SDL_MIXER_INCLUDE_DIR})
+
+        SET(TETRIS_LIBS ${SDL_MIXER_LIBRARY})
+
         SET(OLC_LIBS
+            SDL2::SDL2
             X11
             pthread
             PNG::PNG
@@ -65,16 +74,12 @@ else()
     endif()
 endif()
 
-
-
-
 SET(DATA_ENCODING_SOURCES
   src/data_encoders/data_encoder_factory.cpp
   src/data_encoders/data_to_string_encoder.cpp
   src/data_encoders/olc_sprite_encoder.cpp
   src/data_encoders/sdl_mix_chunk_encoder.cpp
 )
-
 
 add_library(olc src/olc/olcPixelGameEngine.cpp)
 target_link_libraries(olc ${OLC_LIBS})
@@ -102,14 +107,15 @@ add_executable(nestris_x86
         src/tetromino_rng.cpp
         )
 
-
 target_link_libraries(nestris_x86 olc assets_lib ${TETRIS_LIBS})
 
 add_executable(asset_cpp_gen src/tools/asset_cpp_gen.cpp ${DATA_ENCODING_SOURCES})
 target_link_libraries(asset_cpp_gen olc ${TETRIS_LIBS})
 
-add_executable(sdl_gamepad src/tools/sdl_gamepad.cpp)
-target_link_libraries(sdl_gamepad ${TETRIS_LIBS})
+if(NOT APPLE)
+  add_executable(sdl_gamepad src/tools/sdl_gamepad.cpp)
+  target_link_libraries(sdl_gamepad ${TETRIS_LIBS})
+endif()
 
 if(NOT APPLE)
   add_executable(testbed src/tools/button_tester.cpp)

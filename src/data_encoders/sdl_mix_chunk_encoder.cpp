@@ -1,6 +1,6 @@
 #include "data_encoders/sdl_mix_chunk_encoder.hpp"
 
-#include <SDL_mixer.h>
+#include <SDL2/SDL_mixer.h>
 
 #include <iterator>
 #include <memory>

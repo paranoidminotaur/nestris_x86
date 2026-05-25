@@ -1,7 +1,7 @@
 
 #include "assets.hpp"
 
-#include <SDL_mixer.h>
+#include <SDL2/SDL_mixer.h>
 #include <iso646.h>
 
 #include <filesystem>

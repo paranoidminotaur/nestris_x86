@@ -125,5 +125,12 @@ void KeyboardConfigProcessor::setKeyBindings(const KeyBindings& key_bindings) {
   key_bindings_ = key_bindings;
 }
 
+void KeyboardConfigProcessor::startBindingFlow() {
+  key_bindings_ = {};
+  keybinding_active_ = true;
+  active_key_ = static_cast<KeyAction>(0);
+  wait_until_key_lifted_ = true;
+}
+
 
 }  // namespace nestris_x86

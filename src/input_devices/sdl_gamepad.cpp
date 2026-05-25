@@ -1,16 +1,18 @@
 #include "input_devices/sdl_gamepad.hpp"
 
-#include <SDL.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_gamecontroller.h>
+#include <SDL2/SDL_joystick.h>
 #include <iso646.h>
 
 #include <cmath>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "SDL_joystick.h"
 #include "utils/logging.hpp"
 
 namespace nestris_x86 {
@@ -85,6 +87,34 @@ class KeyCodeNameMap {
   std::map<std::string, int> name_to_code_;
 };
 
+// Maps our internal button codes to SDL Game Controller buttons.
+const std::map<int, SDL_GameControllerButton> kCodeToGCButton{
+    {0, SDL_CONTROLLER_BUTTON_A},
+    {1, SDL_CONTROLLER_BUTTON_B},
+    {2, SDL_CONTROLLER_BUTTON_X},
+    {3, SDL_CONTROLLER_BUTTON_Y},
+    {4, SDL_CONTROLLER_BUTTON_LEFTSHOULDER},
+    {5, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER},
+    {6, SDL_CONTROLLER_BUTTON_START},
+    {7, SDL_CONTROLLER_BUTTON_LEFTSTICK},
+    {8, SDL_CONTROLLER_BUTTON_RIGHTSTICK},
+    {10, SDL_CONTROLLER_BUTTON_DPAD_LEFT},
+    {11, SDL_CONTROLLER_BUTTON_DPAD_RIGHT},
+    {12, SDL_CONTROLLER_BUTTON_DPAD_UP},
+    {13, SDL_CONTROLLER_BUTTON_DPAD_DOWN},
+};
+
+// Maps axis index (as passed to registerAxisAsButton) to GC axis.
+const SDL_GameControllerAxis kAxisIndexToGC[] = {
+    SDL_CONTROLLER_AXIS_LEFTX,        // 0
+    SDL_CONTROLLER_AXIS_LEFTY,        // 1
+    SDL_CONTROLLER_AXIS_RIGHTX,       // 2
+    SDL_CONTROLLER_AXIS_RIGHTY,       // 3
+    SDL_CONTROLLER_AXIS_TRIGGERLEFT,  // 4
+    SDL_CONTROLLER_AXIS_TRIGGERRIGHT, // 5
+};
+constexpr int kAxisIndexToGCSize = sizeof(kAxisIndexToGC) / sizeof(kAxisIndexToGC[0]);
+
 }  // namespace
 
 class SdlGamePad::Impl {
@@ -92,19 +122,31 @@ class SdlGamePad::Impl {
 
  public:
   Impl() : key_code_name_map_{} {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
       throw std::runtime_error("Couldn't initialize SDL: " + std::string(SDL_GetError()));
     }
 
     SDL_JoystickEventState(SDL_ENABLE);
-    joystick_ = SDL_JoystickOpen(0);
+
+    const int num = SDL_NumJoysticks();
+    fprintf(stderr, "[gamepad] SDL sees %d joystick(s)\n", num);
+    for (int i = 0; i < num; ++i) {
+      const bool isGC = SDL_IsGameController(i);
+      fprintf(stderr, "[gamepad]   [%d] %s%s\n", i, SDL_JoystickNameForIndex(i),
+              isGC ? " (game controller)" : "");
+    }
+
+    tryOpen(0);
 
     for (const auto& [code, name] : key_code_name_map_.getCodeToNameMap()) {
       button_states_[code] = 0;
     }
   }
 
-  ~Impl() {}
+  ~Impl() {
+    if (gc_) SDL_GameControllerClose(gc_);
+    else if (joystick_) SDL_JoystickClose(joystick_);
+  }
 
   bool getKeyState(const KeyCode key_code) {
     pollAndUpdateInteralState();
@@ -163,53 +205,110 @@ class SdlGamePad::Impl {
     int key_code;
   };
 
+  void tryOpen(int index) {
+    if (index < 0 || index >= SDL_NumJoysticks()) return;
+
+    if (SDL_IsGameController(index)) {
+      gc_ = SDL_GameControllerOpen(index);
+      if (gc_) {
+        joystick_ = SDL_GameControllerGetJoystick(gc_);
+        fprintf(stderr, "[gamepad] opened as game controller: %s\n",
+                SDL_GameControllerName(gc_));
+        return;
+      }
+    }
+    // Fallback: raw joystick
+    joystick_ = SDL_JoystickOpen(index);
+    if (joystick_) {
+      fprintf(stderr, "[gamepad] opened as raw joystick: %s  buttons=%d  axes=%d  hats=%d\n",
+              SDL_JoystickName(joystick_),
+              SDL_JoystickNumButtons(joystick_),
+              SDL_JoystickNumAxes(joystick_),
+              SDL_JoystickNumHats(joystick_));
+    } else {
+      fprintf(stderr, "[gamepad] failed to open joystick %d: %s\n", index, SDL_GetError());
+    }
+  }
+
   void processAxisTriggers() {
     for (const auto& trigger : axis_triggers_) {
-      if (axis_states_.count(trigger.axis_number) == 0) {
-        continue;
+      double axis_position = 0.0;
+      if (gc_) {
+        if (trigger.axis_number >= 0 && trigger.axis_number < kAxisIndexToGCSize) {
+          axis_position = SDL_GameControllerGetAxis(gc_, kAxisIndexToGC[trigger.axis_number]);
+        }
+      } else {
+        if (axis_states_.count(trigger.axis_number))
+          axis_position = axis_states_.at(trigger.axis_number);
+        else
+          continue;
       }
-      const auto& axis_position = axis_states_.at(trigger.axis_number);
       button_states_[trigger.key_code] = (std::abs(trigger.axis_pressed - axis_position) <
                                           std::abs(trigger.axis_at_rest - axis_position));
     }
   }
 
   void pollAndUpdateInteralState() {
-    SDL_Event event;
-    while (SDL_PollEvent(&event)) {
-      switch (event.type) {
-        case SDL_JOYBUTTONUP:
-        case SDL_JOYBUTTONDOWN:
-          button_states_[event.jbutton.button] = event.jbutton.state;
-          break;
+    SDL_GameControllerUpdate();  // also updates joystick state
 
-        case SDL_JOYAXISMOTION:
-          axis_states_[event.jaxis.axis] = event.jaxis.value;
-          break;
-
-        case SDL_JOYHATMOTION: {
-          const auto& hat = event.jhat.value;
-          button_states_[key_code_name_map_.nameToCode("DPAD_U")] = bool(hat & SDL_HAT_UP);
-          button_states_[key_code_name_map_.nameToCode("DPAD_D")] = bool(hat & SDL_HAT_DOWN);
-          button_states_[key_code_name_map_.nameToCode("DPAD_R")] = bool(hat & SDL_HAT_RIGHT);
-          button_states_[key_code_name_map_.nameToCode("DPAD_L")] = bool(hat & SDL_HAT_LEFT);
-          break;
+    // Retry opening if nothing was found at construction time (before the SDL event loop).
+    if (!joystick_ && SDL_NumJoysticks() > 0) {
+      tryOpen(0);
+      if (joystick_) {
+        for (const auto& [code, name] : key_code_name_map_.getCodeToNameMap()) {
+          if (!button_states_.count(code)) button_states_[code] = false;
         }
-
-        case SDL_QUIT:
-          /* Set whatever flags are necessary to */
-          /* end the main game loop here */
-          break;
       }
     }
+
+    if (gc_) {
+      // Game Controller API: normalized button + D-pad mapping.
+      for (const auto& [code, gcBtn] : kCodeToGCButton) {
+        const bool state = SDL_GameControllerGetButton(gc_, gcBtn) != 0;
+        if (state != button_states_[code])
+          fprintf(stderr, "[gamepad] %s: %s\n",
+                  key_code_name_map_.codeToName(code).c_str(), state ? "DOWN" : "UP");
+        button_states_[code] = state;
+      }
+    } else if (joystick_) {
+      // Raw joystick fallback.
+      std::set<int> axis_codes;
+      for (const auto& t : axis_triggers_) axis_codes.insert(t.key_code);
+
+      const int num_buttons = SDL_JoystickNumButtons(joystick_);
+      for (const auto& [code, name] : key_code_name_map_.getCodeToNameMap()) {
+        if (code >= 0 && code < num_buttons && !axis_codes.count(code)) {
+          const bool state = SDL_JoystickGetButton(joystick_, code) != 0;
+          if (state != button_states_[code])
+            fprintf(stderr, "[gamepad] button %d (%s): %s\n", code, name.c_str(), state ? "DOWN" : "UP");
+          button_states_[code] = state;
+        }
+      }
+
+      if (SDL_JoystickNumHats(joystick_) > 0) {
+        const auto hat = SDL_JoystickGetHat(joystick_, 0);
+        button_states_[key_code_name_map_.nameToCode("DPAD_U")] = bool(hat & SDL_HAT_UP);
+        button_states_[key_code_name_map_.nameToCode("DPAD_D")] = bool(hat & SDL_HAT_DOWN);
+        button_states_[key_code_name_map_.nameToCode("DPAD_R")] = bool(hat & SDL_HAT_RIGHT);
+        button_states_[key_code_name_map_.nameToCode("DPAD_L")] = bool(hat & SDL_HAT_LEFT);
+      }
+
+      const int num_axes = SDL_JoystickNumAxes(joystick_);
+      for (int i = 0; i < num_axes; ++i) {
+        axis_states_[i] = SDL_JoystickGetAxis(joystick_, i);
+      }
+    }
+
     processAxisTriggers();
   }
+
   KeyCodeNameMap key_code_name_map_;
-  SDL_Joystick* joystick_;
+  SDL_GameController* gc_ = nullptr;
+  SDL_Joystick* joystick_ = nullptr;
   std::map<SdlKeyCode, bool> button_states_;
   std::map<int, double> axis_states_;
   std::vector<AxisMovementTrigger> axis_triggers_;
-};  // namespace nestris_x86
+};
 
 SdlGamePad::SdlGamePad() : pimpl_{std::make_unique<SdlGamePad::Impl>()} {}
 

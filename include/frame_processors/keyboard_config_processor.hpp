@@ -21,6 +21,7 @@ class KeyboardConfigProcessor : public FrameProcessorInterface {
 
   KeyBindings getKeyBindings() const;
   void setKeyBindings(const KeyBindings& key_bindings);
+  void startBindingFlow();
 
  private:
   ProgramFlowSignal processKeyEvents(const KeyEvents& key_events);

@@ -3,7 +3,7 @@
 int main(const int argc, const char** argv)
 {
   nestris_x86::NestrisX86 nestetris{};
-	if (nestetris.Construct(256, 225, 4, 4))
+	if (nestetris.Construct(256, 225, 2, 2))
   {
     nestetris.Start();
   }

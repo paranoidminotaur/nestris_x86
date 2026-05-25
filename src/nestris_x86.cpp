@@ -205,6 +205,8 @@ NestrisX86::NestrisX86()
     LOG_INFO("Loaded config from file `" << CONFIG_PATH << "`");
   } else {
     registerDefaultAxes(*gamepad_input_);
+    active_processor_ = gamepad_config_processor_;
+    gamepad_config_processor_->startBindingFlow();
   }
 }
 

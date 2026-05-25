@@ -1,6 +1,7 @@
 #include "sound.hpp"
 
-#include <SDL_mixer.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_mixer.h>
 
 #include <iso646.h>
 #include <memory>
@@ -10,10 +11,15 @@
 
 namespace sound {
 SoundPlayer::SoundPlayer() {
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
+    throw std::runtime_error("Failed to initialize SDL audio: " + std::string(SDL_GetError()));
+  }
   const int result = Mix_OpenAudio(44100, AUDIO_S16SYS, 2, 512);
   if (result < 0) {
-    throw std::runtime_error("Failed to initialize SDL sound mixer.");
+    throw std::runtime_error("Failed to initialize SDL sound mixer: " +
+                             std::string(Mix_GetError()));
   }
+  Mix_AllocateChannels(16);
 }
 
 SoundPlayer::~SoundPlayer() {

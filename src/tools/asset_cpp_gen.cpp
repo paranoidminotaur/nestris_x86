@@ -1,5 +1,5 @@
 
-#include <SDL_mixer.h>
+#include <SDL2/SDL_mixer.h>
 
 #include <data_encoders/data_encoder_factory.hpp>
 #include <filesystem>
